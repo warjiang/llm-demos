@@ -32,13 +32,14 @@ export default {
 
 # examples
 config `.env` file in root directory, example:
+
 ```
 VITE_OPENAI_BASE='https://api.openai.com/v1'
 VITE_OPENAI_API_KEY='sk-xxx'
 VITE_OPENAI_MODEL_NAME='gpt-3.5-turbo'
 ```
 
-
+start the project
 ```javascript
 # create .env file in root directory
 
