@@ -9,7 +9,6 @@ load_dotenv()
 
 
 async def main():
-    print(os.environ.get("API_KEY"))
     my_mcp_client = MyMCPClient(
         base_url=os.environ.get("BASE_URL"),
         api_key=os.environ.get("API_KEY"),

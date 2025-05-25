@@ -24,7 +24,8 @@ class MyMCPClient:
         self.model = model
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
-        script_dir = os.path.dirname(os.path.abspath(__file__))  # 最可靠方法
+        # get current folder according to buildin variable `__file__`
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         with open(f"{script_dir}/prompt.txt", "r", encoding="utf-8") as file:
             self.system_prompt = file.read()
         self.stdio = None
@@ -57,18 +58,18 @@ class MyMCPClient:
         await self.session.initialize()
         # 将MCP信息添加到system_prompt
         response = await self.session.list_tools()
-        available_tools = [
-            '##' + mcp_name + '\n### Available Tools\n- ' + tool.name + "\n" + tool.description + "\n" + json.dumps(
-                tool.inputSchema) for tool in response.tools
-        ]
         # available_tools = [
-        #     f"## {mcp_name}",
-        #     "### Available Tools",
-        #     *[
-        #         f"- {tool.name}\n  {tool.description}\n  {json.dumps(tool.inputSchema, indent=2)}"
-        #         for tool in response.tools
-        #     ]
+        #     '##' + mcp_name + '\n### Available Tools\n- ' + tool.name + "\n" + tool.description + "\n" + json.dumps(
+        #         tool.inputSchema) for tool in response.tools
         # ]
+        available_tools = [
+            f"## {mcp_name}",
+            "### Available Tools",
+            *[
+                f"- {tool.name}\n  {tool.description}\n  {json.dumps(tool.inputSchema)}"
+                for tool in response.tools
+            ]
+        ]
         self.system_prompt = self.system_prompt.replace(
             "<$MCP_INFO$>",
             "\n".join(available_tools) + "\n<$MCP_INFO$>"
@@ -134,9 +135,19 @@ class MyMCPClient:
             final_text.append(response.choices[0].message.content)
         return "\n".join(final_text)
 
-    def parse_tool_string(self, tool_string: str) -> tuple[str, str, dict]:
+    @staticmethod
+    def parse_tool_string(tool_string: str) -> tuple[str, str, dict]:
         """
         解析大模型工具调用返回的字符串
+        tool_string:
+        '
+        我将会查询控制面上的所有 namespace。请稍等。
+        <use_mcp_tool>
+            <server_name>karmada-mcp-server</server_name>
+            <tool_name>list_namespace</tool_name>
+            <arguments>{}</arguments>
+        </use_mcp_tool>
+        '
         """
         tool_string = re.findall("(<use_mcp_tool>.*?</use_mcp_tool>)", tool_string, re.S)[0]
         root = etree.fromstring(tool_string)
