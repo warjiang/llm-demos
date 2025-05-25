@@ -27,7 +27,12 @@ async def main():
             ]
         )
         """
+        """
         await my_mcp_client.connect_to_sse_server("amap-mcp-server", f"https://mcp.amap.com/sse?key={os.environ.get('AMAP_KEY')}")
+        """
+        # get current folder according to buildin variable `__file__`
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        await my_mcp_client.mcp_json_config(os.path.join(current_dir, "mcp-server.json"))
         await my_mcp_client.chat_loop()
     finally:
         await my_mcp_client.cleanup()

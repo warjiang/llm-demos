@@ -36,6 +36,39 @@ class MyMCPClient:
         self.write = None
         self.sessions = {}
 
+    async def mcp_json_config(self, mcp_json_file):
+        try:
+            with open(mcp_json_file, 'r') as f:
+                mcp_config: dict = json.load(f)
+        except json.JSONDecodeError:
+            raise ValueError("Invalid MCP config")
+        servers_config: dict = mcp_config.get('mcpServers', {})
+        for k, v in servers_config.items():
+            mcp_name = v.get('name', k)
+            mcp_type: str = v.get('type', 'stdio')
+            try:
+                print('-' * 50)
+                if not v.get('isActive', False):
+                    continue
+                if mcp_type.lower() == 'stdio':
+                    command = v.get('command', None)
+                    args = v.get('args', [])
+                    env = v.get('env', {})
+                    if command is None:
+                        raise ValueError(f'{mcp_name} command is empty.')
+                    if not args:
+                        raise ValueError(f'{mcp_name} args is empty.')
+                    await self.connect_to_stdio_server(mcp_name, command, args, env)
+                elif mcp_type.lower() == 'sse':
+                    server_url = v.get('url', None)
+                    if server_url is None:
+                        raise ValueError(f'{mcp_name} server_url is empty.')
+                    await self.connect_to_sse_server(mcp_name, server_url)
+                else:
+                    raise ValueError(f'{mcp_name} mcp type must in [stdio, sse].')
+            except Exception as e:
+                print(f"Error connecting to {mcp_name}: {e}")
+
     async def connect_to_stdio_server(
             self,
             mcp_name: str,
@@ -59,6 +92,7 @@ class MyMCPClient:
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
         self.stdio, self.write = stdio_transport
         self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+        self.sessions[mcp_name] = self.session
 
         await self.session.initialize()
         # 将MCP信息添加到system_prompt
@@ -142,7 +176,7 @@ class MyMCPClient:
             server_name, tool_name, tool_args = self.parse_tool_string(content)
 
             # 执行工具调用
-            result = await self.session.call_tool(tool_name, tool_args)
+            result = await self.sessions[server_name].call_tool(tool_name, tool_args)
             print(f"[Calling tool {tool_name} with args {tool_args}]")
             print("-" * 40)
             print("Server:", server_name)

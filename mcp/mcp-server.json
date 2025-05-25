@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "amap-sse": {
+      "isActive": true,
+      "type": "sse",
+      "url": "https://mcp.amap.com/sse?key=74ea1e236b16006444b1b0bbd18a571b",
+      "name": "amap-sse"
+    },
+    "karmada-stdio": {
+      "isActive": true,
+      "type": "stdio",
+      "command": "/Users/dingwenjiang/workspace/codereview/karmada-mcp-server/_output/bin/darwin/arm64/karmada-mcp-server",
+      "args": [
+        "stdio",
+        "--karmada-kubeconfig=/Users/dingwenjiang/.kube/karmada.config",
+        "--karmada-context=karmada-apiserver",
+        "--skip-karmada-apiserver-tls-verify"
+      ],
+      "name": "karmada-stdio",
+      "env": {}
+    }
+  }
+}
