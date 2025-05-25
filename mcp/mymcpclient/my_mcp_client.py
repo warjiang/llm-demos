@@ -4,6 +4,8 @@ from contextlib import AsyncExitStack
 from openai import OpenAI
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.sse import sse_client
+
 from lxml import etree
 import re, os, json
 
@@ -24,11 +26,48 @@ class MyMCPClient:
         self.model = model
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
-        script_dir = os.path.dirname(os.path.abspath(__file__))  # 最可靠方法
+        # get current folder according to buildin variable `__file__`
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         with open(f"{script_dir}/prompt.txt", "r", encoding="utf-8") as file:
             self.system_prompt = file.read()
+
+        self.sse = None
         self.stdio = None
         self.write = None
+        self.sessions = {}
+
+    async def mcp_json_config(self, mcp_json_file):
+        try:
+            with open(mcp_json_file, 'r') as f:
+                mcp_config: dict = json.load(f)
+        except json.JSONDecodeError:
+            raise ValueError("Invalid MCP config")
+        servers_config: dict = mcp_config.get('mcpServers', {})
+        for k, v in servers_config.items():
+            mcp_name = v.get('name', k)
+            mcp_type: str = v.get('type', 'stdio')
+            try:
+                print('-' * 50)
+                if not v.get('isActive', False):
+                    continue
+                if mcp_type.lower() == 'stdio':
+                    command = v.get('command', None)
+                    args = v.get('args', [])
+                    env = v.get('env', {})
+                    if command is None:
+                        raise ValueError(f'{mcp_name} command is empty.')
+                    if not args:
+                        raise ValueError(f'{mcp_name} args is empty.')
+                    await self.connect_to_stdio_server(mcp_name, command, args, env)
+                elif mcp_type.lower() == 'sse':
+                    server_url = v.get('url', None)
+                    if server_url is None:
+                        raise ValueError(f'{mcp_name} server_url is empty.')
+                    await self.connect_to_sse_server(mcp_name, server_url)
+                else:
+                    raise ValueError(f'{mcp_name} mcp type must in [stdio, sse].')
+            except Exception as e:
+                print(f"Error connecting to {mcp_name}: {e}")
 
     async def connect_to_stdio_server(
             self,
@@ -53,26 +92,55 @@ class MyMCPClient:
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
         self.stdio, self.write = stdio_transport
         self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+        self.sessions[mcp_name] = self.session
 
         await self.session.initialize()
         # 将MCP信息添加到system_prompt
         response = await self.session.list_tools()
-        available_tools = [
-            '##' + mcp_name + '\n### Available Tools\n- ' + tool.name + "\n" + tool.description + "\n" + json.dumps(
-                tool.inputSchema) for tool in response.tools
-        ]
         # available_tools = [
-        #     f"## {mcp_name}",
-        #     "### Available Tools",
-        #     *[
-        #         f"- {tool.name}\n  {tool.description}\n  {json.dumps(tool.inputSchema, indent=2)}"
-        #         for tool in response.tools
-        #     ]
+        #     '##' + mcp_name + '\n### Available Tools\n- ' + tool.name + "\n" + tool.description + "\n" + json.dumps(
+        #         tool.inputSchema) for tool in response.tools
         # ]
+        available_tools = [
+            f"## {mcp_name}",
+            "### Available Tools",
+            *[
+                f"- {tool.name}\n  {tool.description}\n  {json.dumps(tool.inputSchema)}"
+                for tool in response.tools
+            ]
+        ]
         self.system_prompt = self.system_prompt.replace(
             "<$MCP_INFO$>",
             "\n".join(available_tools) + "\n<$MCP_INFO$>"
         )
+        tools = response.tools
+        print(f"Successfully connected to {mcp_name} server with tools:", [tool.name for tool in tools])
+
+    async def connect_to_sse_server(self, mcp_name, server_url: str):
+        """
+        Connect to an MCP server
+
+       Args:
+           :param mcp_name:
+           :param server_url:
+       """
+        stdio_transport = await self.exit_stack.enter_async_context(sse_client(server_url))
+        self.sse, self.write = stdio_transport
+        self.session = await self.exit_stack.enter_async_context(ClientSession(self.sse, self.write))
+        self.sessions[mcp_name] = self.session
+
+        await self.session.initialize()
+        # List available tools
+        response = await self.session.list_tools()
+        available_tools = [
+            f"## {mcp_name}",
+            "### Available Tools",
+            *[
+                f"- {tool.name}\n  {tool.description}\n  {json.dumps(tool.inputSchema)}"
+                for tool in response.tools
+            ]
+        ]
+        self.system_prompt = self.system_prompt.replace("<$MCP_INFO$>", "\n".join(available_tools) + "\n<$MCP_INFO$>\n")
         tools = response.tools
         print(f"Successfully connected to {mcp_name} server with tools:", [tool.name for tool in tools])
 
@@ -108,7 +176,7 @@ class MyMCPClient:
             server_name, tool_name, tool_args = self.parse_tool_string(content)
 
             # 执行工具调用
-            result = await self.session.call_tool(tool_name, tool_args)
+            result = await self.sessions[server_name].call_tool(tool_name, tool_args)
             print(f"[Calling tool {tool_name} with args {tool_args}]")
             print("-" * 40)
             print("Server:", server_name)
@@ -134,9 +202,19 @@ class MyMCPClient:
             final_text.append(response.choices[0].message.content)
         return "\n".join(final_text)
 
-    def parse_tool_string(self, tool_string: str) -> tuple[str, str, dict]:
+    @staticmethod
+    def parse_tool_string(tool_string: str) -> tuple[str, str, dict]:
         """
         解析大模型工具调用返回的字符串
+        tool_string:
+        '
+        我将会查询控制面上的所有 namespace。请稍等。
+        <use_mcp_tool>
+            <server_name>karmada-mcp-server</server_name>
+            <tool_name>list_namespace</tool_name>
+            <arguments>{}</arguments>
+        </use_mcp_tool>
+        '
         """
         tool_string = re.findall("(<use_mcp_tool>.*?</use_mcp_tool>)", tool_string, re.S)[0]
         root = etree.fromstring(tool_string)
