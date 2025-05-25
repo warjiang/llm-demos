@@ -15,6 +15,7 @@ async def main():
         model=os.environ.get("MODEL")
     )
     try:
+        """
         await my_mcp_client.connect_to_stdio_server(
             'karmada-mcp-server',
             '/Users/dingwenjiang/workspace/codereview/karmada-mcp-server/_output/bin/darwin/arm64/karmada-mcp-server',
@@ -25,6 +26,8 @@ async def main():
                 "--skip-karmada-apiserver-tls-verify"
             ]
         )
+        """
+        await my_mcp_client.connect_to_sse_server("amap-mcp-server", f"https://mcp.amap.com/sse?key={os.environ.get('AMAP_KEY')}")
         await my_mcp_client.chat_loop()
     finally:
         await my_mcp_client.cleanup()

@@ -4,6 +4,8 @@ from contextlib import AsyncExitStack
 from openai import OpenAI
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.sse import sse_client
+
 from lxml import etree
 import re, os, json
 
@@ -28,8 +30,11 @@ class MyMCPClient:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         with open(f"{script_dir}/prompt.txt", "r", encoding="utf-8") as file:
             self.system_prompt = file.read()
+
+        self.sse = None
         self.stdio = None
         self.write = None
+        self.sessions = {}
 
     async def connect_to_stdio_server(
             self,
@@ -74,6 +79,34 @@ class MyMCPClient:
             "<$MCP_INFO$>",
             "\n".join(available_tools) + "\n<$MCP_INFO$>"
         )
+        tools = response.tools
+        print(f"Successfully connected to {mcp_name} server with tools:", [tool.name for tool in tools])
+
+    async def connect_to_sse_server(self, mcp_name, server_url: str):
+        """
+        Connect to an MCP server
+
+       Args:
+           :param mcp_name:
+           :param server_url:
+       """
+        stdio_transport = await self.exit_stack.enter_async_context(sse_client(server_url))
+        self.sse, self.write = stdio_transport
+        self.session = await self.exit_stack.enter_async_context(ClientSession(self.sse, self.write))
+        self.sessions[mcp_name] = self.session
+
+        await self.session.initialize()
+        # List available tools
+        response = await self.session.list_tools()
+        available_tools = [
+            f"## {mcp_name}",
+            "### Available Tools",
+            *[
+                f"- {tool.name}\n  {tool.description}\n  {json.dumps(tool.inputSchema)}"
+                for tool in response.tools
+            ]
+        ]
+        self.system_prompt = self.system_prompt.replace("<$MCP_INFO$>", "\n".join(available_tools) + "\n<$MCP_INFO$>\n")
         tools = response.tools
         print(f"Successfully connected to {mcp_name} server with tools:", [tool.name for tool in tools])
 
